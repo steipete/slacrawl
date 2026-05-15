@@ -27,6 +27,8 @@ const (
 	draftSourceName = "desktop-draft"
 )
 
+var makeSnapshotTempDir = os.MkdirTemp
+
 type Source struct {
 	Path      string              `json:"path"`
 	Available bool                `json:"available"`
@@ -234,11 +236,17 @@ func Inspect(path string) (Source, error) {
 	return source, nil
 }
 
-func SnapshotPath(path string) (Snapshot, error) {
-	root, err := os.MkdirTemp("", "slacrawl-desktop-*")
+func SnapshotPath(path string) (snapshot Snapshot, err error) {
+	root, err := makeSnapshotTempDir("", "slacrawl-desktop-*")
 	if err != nil {
 		return Snapshot{}, err
 	}
+	keepSnapshot := false
+	defer func() {
+		if !keepSnapshot {
+			_ = os.RemoveAll(root)
+		}
+	}()
 
 	target := filepath.Join(root, "Slack")
 	if err := os.MkdirAll(target, 0o750); err != nil {
@@ -265,6 +273,7 @@ func SnapshotPath(path string) (Snapshot, error) {
 			return Snapshot{}, err
 		}
 	}
+	keepSnapshot = true
 	return Snapshot{Root: target}, nil
 }
 
@@ -316,7 +325,7 @@ func Ingest(ctx context.Context, st *store.Store, sourcePath string) (Source, er
 	if err != nil {
 		return Source{}, err
 	}
-	source.Snapshot = snapshot.Root
+	defer func() { _ = os.RemoveAll(filepath.Dir(snapshot.Root)) }()
 
 	extracted, err := Extract(snapshot.Root)
 	if err != nil {

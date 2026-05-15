@@ -91,9 +91,12 @@ func TestIngestDesktopState(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, st.Close()) }()
 
+	snapshotParent := withSnapshotTempParent(t)
 	source, err := Ingest(context.Background(), st, root)
 	require.NoError(t, err)
 	require.True(t, source.Available)
+	require.Empty(t, source.Snapshot)
+	requireEmptyDir(t, snapshotParent)
 	require.Equal(t, 1, source.Local.DraftCount)
 	require.Len(t, source.IndexedDB.ObjectStores, 1)
 
@@ -143,6 +146,20 @@ func TestIngestDesktopDraftUsesPersistWorkspace(t *testing.T) {
 	require.Len(t, messages, 1)
 	require.Equal(t, "T222", messages[0].WorkspaceID)
 	require.Equal(t, "U222", messages[0].UserID)
+}
+
+func TestSnapshotPathRemovesPartialSnapshotOnError(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "storage"), 0o750))
+	loopPath := filepath.Join(root, "storage", "root-state.json")
+	if err := os.Symlink("root-state.json", loopPath); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	snapshotParent := withSnapshotTempParent(t)
+	_, err := SnapshotPath(root)
+	require.Error(t, err)
+	requireEmptyDir(t, snapshotParent)
 }
 
 func TestExtractIndexedDBStates(t *testing.T) {
@@ -266,4 +283,24 @@ func TestInspectIncludesSnapshotDerivedDesktopSummaries(t *testing.T) {
 	require.Equal(t, 1, source.Local.WorkspaceCount)
 	require.Equal(t, 1, source.Local.DraftCount)
 	require.Len(t, source.IndexedDB.ObjectStores, 1)
+}
+
+func withSnapshotTempParent(t *testing.T) string {
+	t.Helper()
+	parent := t.TempDir()
+	previous := makeSnapshotTempDir
+	makeSnapshotTempDir = func(_ string, pattern string) (string, error) {
+		return os.MkdirTemp(parent, pattern)
+	}
+	t.Cleanup(func() {
+		makeSnapshotTempDir = previous
+	})
+	return parent
+}
+
+func requireEmptyDir(t *testing.T, path string) {
+	t.Helper()
+	entries, err := os.ReadDir(path)
+	require.NoError(t, err)
+	require.Empty(t, entries)
 }
